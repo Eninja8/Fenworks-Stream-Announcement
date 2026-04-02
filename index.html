@@ -695,6 +695,8 @@ async function postAll() {
   if(missing.length){setPs('Missing webhook for: '+missing.map(s=>s.name).join(', '),'err');return;}
   setPs('Posting...',''); setSyncDot('syncing');
   const targets=S.servers.filter(s=>S.selectedServers.includes(s.id));
+  console.log('POST targets:', targets.map(s=>({name:s.name,webhook:s.webhook?.slice(0,40)})));
+  console.log('PROXY_URL:', PROXY_URL);
   const results=await Promise.all(targets.map(postOne));
   save(); renderServerPills();
   const ok=results.filter(r=>r.ok).length;
@@ -707,26 +709,33 @@ async function postAll() {
 
 async function postOne(srv) {
   try {
+    console.log('postOne:', srv.name, 'webhook:', srv.webhook?.slice(0,50));
+    const payload = {
+      webhookUrl: srv.webhook.trim(),
+      content: buildMsg(srv),
+    };
+    console.log('Calling proxy:', PROXY_URL);
     const res = await fetch(PROXY_URL, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        webhookUrl: srv.webhook.trim(),
-        content: buildMsg(srv),
-      }),
+      body: JSON.stringify(payload),
     });
+    console.log('Proxy response status:', res.status);
     if (!res.ok) {
       let errText = '';
       try { errText = await res.text(); } catch(e2) {}
+      console.log('Proxy error body:', errText);
       setRow(srv.id, `❌ HTTP ${res.status}`, 'err');
       setPs(`${srv.name}: HTTP ${res.status} — ${errText.slice(0,120)}`, 'err');
       return {ok:false, name:srv.name};
     }
     const d = await res.json();
+    console.log('Discord response:', d);
     srv.messageId = d.id;
     setRow(srv.id, `✅ ID: ${d.id.slice(-6)}`, 'ok');
     return {ok:true, name:srv.name};
   } catch(e) {
+    console.error('postOne error:', e);
     setRow(srv.id, '❌ Failed', 'err');
     setPs(`${srv.name} error: ${e.message}`, 'err');
     return {ok:false, name:srv.name};
