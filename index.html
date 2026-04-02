@@ -137,6 +137,13 @@
   .counter { background: var(--accent); color: #fff; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 10px; font-family: var(--font-display); }
   .empty-state { text-align: center; padding: 32px 16px; color: var(--muted); font-family: var(--font-display); font-size: 13px; letter-spacing: 1px; text-transform: uppercase; }
 
+  .session-card { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 12px 14px; display: flex; align-items: center; gap: 12px; }
+  .session-card:hover { border-color: var(--muted); }
+  .session-info { flex: 1; }
+  .session-title { font-family: var(--font-display); font-size: 14px; font-weight: 700; letter-spacing: 1px; color: var(--text); }
+  .session-meta { font-size: 11px; color: var(--muted); font-family: var(--font-display); letter-spacing: 0.5px; margin-top: 3px; }
+  .session-actions { display: flex; gap: 6px; flex-shrink: 0; }
+
   ::-webkit-scrollbar { width: 5px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
@@ -264,7 +271,23 @@
         <button class="btn btn-primary btn-lg" style="flex:1" id="postBtn" onclick="postAll()">📡 POST TO DISCORD</button>
         <button class="btn btn-secondary btn-sm" id="syncBtn" onclick="manualSync()" style="display:none">🔄 SYNC</button>
       </div>
-      <button class="btn btn-danger btn-sm" onclick="clearSession()" style="font-size:11px">✕ CLEAR SESSION</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-ghost btn-sm" style="flex:1;font-size:11px" onclick="openSessions()">📋 SESSIONS</button>
+        <button class="btn btn-danger btn-sm" style="flex:1;font-size:11px" onclick="clearSession()">✕ CLEAR SESSION</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- SESSIONS -->
+<div class="overlay" id="sessionsOverlay">
+  <div class="modal" style="width:640px">
+    <div class="modal-hd">
+      <span class="modal-title">📋 Past Sessions</span>
+      <button class="btn btn-ghost btn-sm" onclick="closeSessions()">✕ CLOSE</button>
+    </div>
+    <div class="modal-bd" id="sessionsModalBody" style="gap:10px;max-height:70vh;overflow-y:auto">
+      <div style="color:var(--muted);font-family:var(--font-display);font-size:12px;letter-spacing:1px;text-transform:uppercase">No saved sessions yet.</div>
     </div>
   </div>
 </div>
@@ -620,7 +643,7 @@ function buildMsg(srv) {
 
   if(S.streamDate||S.startTime) lines.push(`🕐 Start: ${fd(S.streamDate)}${S.startTime?' • '+ft(S.startTime):''}`);
   if(S.casters) lines.push(`🎙️ Casters: ${S.casters}`);
-  if(S.streamLink) lines.push(`📺 Stream: ${S.streamLink}`);
+  if(S.streamLink) lines.push(`📺 Stream: [Click Here](${S.streamLink})`);
   lines.push(`📡 Status: ${se(S.streamStatus)} **${S.streamStatus}**`);
   lines.push('——————————————————');
 
@@ -822,7 +845,9 @@ function setSyncDot(c){document.getElementById('syncDot').className='sync-dot'+(
 function setPs(msg,type){const el=document.getElementById('psbar');el.textContent=msg;el.className='psbar'+(type?' '+type:'');}
 
 function clearSession() {
-  if(!confirm('Clear session? Resets stream data and stops syncing. Server configs and webhooks are kept.')) return;
+  if(!confirm('Clear session? This will save it to Sessions history and reset. Server configs and webhooks are kept.')) return;
+  // Archive before clearing
+  if(S.matches.length || S.weekNum || S.streamLink) saveSessionArchive();
   if(syncTimer) clearInterval(syncTimer);
   if(cdTimer) clearInterval(cdTimer);
   Object.assign(S,{streamType:'weekly',weekNum:'',streamDate:'',startTime:'',casters:'',streamLink:'',streamStatus:'UPCOMING',selectedGames:[],customTitle:'',stateTag:'MN',matches:[],selectedServers:[]});
@@ -928,6 +953,137 @@ function addCustomGame(){
     srv.emojis[name]=''; srv.roles[name]='';
   });
   inp.value=''; save(); renderGamePills(); renderScBlocks();
+}
+
+
+// ═══════════════════════════════════════════
+// SESSIONS
+// ═══════════════════════════════════════════
+function saveSessionArchive() {
+  // Save current state as a named session before clearing
+  const sessions = loadAllSessions();
+  const title = buildTitle() || 'Untitled Stream';
+  const id = 'session_' + Date.now();
+  const session = {
+    id,
+    title,
+    savedAt: new Date().toISOString(),
+    streamType: S.streamType,
+    weekNum: S.weekNum,
+    streamDate: S.streamDate,
+    startTime: S.startTime,
+    casters: S.casters,
+    streamLink: S.streamLink,
+    streamStatus: S.streamStatus,
+    selectedGames: S.selectedGames,
+    customTitle: S.customTitle,
+    stateTag: S.stateTag,
+    matches: JSON.parse(JSON.stringify(S.matches)),
+    selectedServers: S.selectedServers,
+    // Save message IDs so we can re-sync
+    serverMessageIds: S.servers.reduce((acc, srv) => {
+      if (srv.messageId) acc[srv.id] = srv.messageId;
+      return acc;
+    }, {}),
+  };
+  sessions.unshift(session);
+  localStorage.setItem('fw_sessions', JSON.stringify(sessions));
+  return session;
+}
+
+function loadAllSessions() {
+  try {
+    return JSON.parse(localStorage.getItem('fw_sessions') || '[]');
+  } catch(e) { return []; }
+}
+
+function deleteSession(id) {
+  if (!confirm('Delete this session?')) return;
+  const sessions = loadAllSessions().filter(s => s.id !== id);
+  localStorage.setItem('fw_sessions', JSON.stringify(sessions));
+  renderSessionsList();
+}
+
+function restoreSession(id) {
+  const sessions = loadAllSessions();
+  const session = sessions.find(s => s.id === id);
+  if (!session) return;
+
+  if (!confirm(`Restore "${session.title}"? Your current session will be saved first.`)) return;
+
+  // Save current session before overwriting
+  if (S.matches.length || S.weekNum || S.streamLink) saveSessionArchive();
+
+  // Stop sync
+  if (syncTimer) clearInterval(syncTimer);
+  if (cdTimer) clearInterval(cdTimer);
+
+  // Restore state
+  S.streamType = session.streamType || 'weekly';
+  S.weekNum = session.weekNum || '';
+  S.streamDate = session.streamDate || '';
+  S.startTime = session.startTime || '';
+  S.casters = session.casters || '';
+  S.streamLink = session.streamLink || '';
+  S.streamStatus = session.streamStatus || 'UPCOMING';
+  S.selectedGames = session.selectedGames || [];
+  S.customTitle = session.customTitle || '';
+  S.stateTag = session.stateTag || 'MN';
+  S.matches = session.matches || [];
+  S.selectedServers = session.selectedServers || [];
+
+  // Restore message IDs so sync still works
+  if (session.serverMessageIds) {
+    S.servers.forEach(srv => {
+      if (session.serverMessageIds[srv.id]) {
+        srv.messageId = session.serverMessageIds[srv.id];
+      } else {
+        srv.messageId = null;
+      }
+    });
+  }
+
+  save();
+  closeSessions();
+  renderAll();
+  startSyncLoop();
+  setPs(`Restored: ${session.title}`, 'ok');
+}
+
+function openSessions() {
+  renderSessionsList();
+  document.getElementById('sessionsOverlay').classList.add('open');
+}
+
+function closeSessions() {
+  document.getElementById('sessionsOverlay').classList.remove('open');
+}
+
+function renderSessionsList() {
+  const body = document.getElementById('sessionsModalBody');
+  const sessions = loadAllSessions();
+
+  if (!sessions.length) {
+    body.innerHTML = '<div style="color:var(--muted);font-family:var(--font-display);font-size:12px;letter-spacing:1px;text-transform:uppercase;padding:20px 0;text-align:center">No saved sessions yet — they appear here when you clear a session.</div>';
+    return;
+  }
+
+  body.innerHTML = sessions.map(s => {
+    const date = new Date(s.savedAt).toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric', hour:'numeric', minute:'2-digit'});
+    const games = (s.selectedGames||[]).join(', ') || '—';
+    const matchCount = (s.matches||[]).length;
+    const hasMessageIds = s.serverMessageIds && Object.keys(s.serverMessageIds).length > 0;
+    return `<div class="session-card">
+      <div class="session-info">
+        <div class="session-title">${s.title}</div>
+        <div class="session-meta">${date} &nbsp;•&nbsp; ${games} &nbsp;•&nbsp; ${matchCount} match${matchCount!==1?'es':''} ${hasMessageIds?'&nbsp;•&nbsp; <span style="color:var(--green)">● Posted</span>':''}</div>
+      </div>
+      <div class="session-actions">
+        <button class="btn btn-primary btn-sm" onclick="restoreSession('${s.id}')">↩ RESTORE</button>
+        <button class="btn btn-danger btn-sm" onclick="deleteSession('${s.id}')">✕</button>
+      </div>
+    </div>`;
+  }).join('');
 }
 
 // ═══════════════════════════════════════════
