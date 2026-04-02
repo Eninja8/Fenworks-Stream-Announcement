@@ -192,13 +192,19 @@
             </div>
           </div>
           <div class="fg fg2">
-            <div class="field" id="weekWrap">
-              <label>Week / Day #</label>
-              <input type="text" id="weekNum" placeholder="e.g. 8 or Day 3" oninput="sap()">
+            <div class="fg fg2" id="weekWrap">
+              <div class="field">
+                <label>Week #</label>
+                <input type="text" id="weekNum" placeholder="Week #" oninput="sap()">
+              </div>
+              <div class="field">
+                <label>Day #</label>
+                <input type="text" id="dayNum" placeholder="Day #" oninput="sap()">
+              </div>
             </div>
             <div class="field">
               <label>State / Region Tag</label>
-              <input type="text" id="stateTag" placeholder="e.g. MN" oninput="sap()">
+              <input type="text" id="stateTag" placeholder="State Tag" oninput="sap()">
             </div>
           </div>
           <div class="fg fg2">
@@ -213,7 +219,7 @@
           </div>
           <div class="field">
             <label>Casters</label>
-            <input type="text" id="casters" placeholder="e.g. LaFever, Skeptir" oninput="sap()">
+            <input type="text" id="casters" placeholder="Caster Names" oninput="sap()">
           </div>
           <div class="field">
             <label>Stream Link</label>
@@ -234,6 +240,13 @@
           <div class="field" id="customTitleWrap" style="display:none">
             <label>Custom Title</label>
             <input type="text" id="customTitle" placeholder="Full post title" oninput="sap()">
+          </div>
+          <div class="field">
+            <label>Match Format</label>
+            <div class="type-row">
+              <button class="type-btn" id="fmtDefault" onclick="setMatchFormat('default',this)">📋 Default</button>
+              <button class="type-btn" id="fmtCondensed" onclick="setMatchFormat('condensed',this)">⚡ Condensed</button>
+            </div>
           </div>
         </div>
       </div>
@@ -399,7 +412,7 @@ const PROXY_URL = 'https://fenworksstreamannouncement.ethanfiorito.workers.dev';
 // STATE
 // ═══════════════════════════════════════════
 let S = {
-  streamType:'weekly', weekNum:'', streamDate:'', startTime:'', casters:'',
+  streamType:'weekly', weekNum:'', dayNum:'', matchFormat:'default', streamDate:'', startTime:'', casters:'',
   streamLink:'', streamStatus:'UPCOMING', selectedGames:[], customTitle:'',
   stateTag:'MN', matches:[], selectedServers:[], servers:null, gamesList:null, syncInterval:5,
 };
@@ -431,20 +444,21 @@ function save() { localStorage.setItem('fw_ann_v3', JSON.stringify(S)); }
 function sap() { readForm(); save(); updatePreview(); }
 
 function readForm() {
-  S.weekNum = v('weekNum'); S.streamDate = v('streamDate'); S.startTime = v('startTime');
+  S.weekNum = v('weekNum'); S.dayNum = v('dayNum'); S.streamDate = v('streamDate'); S.startTime = v('startTime');
   S.casters = v('casters'); S.streamLink = v('streamLink'); S.streamStatus = v('streamStatus');
   S.customTitle = v('customTitle'); S.stateTag = v('stateTag');
 }
 function v(id) { return document.getElementById(id)?.value || ''; }
 
 function loadForm() {
-  set('weekNum',S.weekNum); set('streamDate',S.streamDate); set('startTime',S.startTime);
+  set('weekNum',S.weekNum); set('dayNum',S.dayNum||''); set('streamDate',S.streamDate); set('startTime',S.startTime);
   set('casters',S.casters); set('streamLink',S.streamLink); set('streamStatus',S.streamStatus);
   set('customTitle',S.customTitle); set('stateTag',S.stateTag||'MN');
   document.querySelectorAll('.type-btn').forEach(b=>b.classList.remove('active'));
   const ti = {weekly:0,divisionals:1,playoffs:2,custom:3}[S.streamType]||0;
   document.querySelectorAll('.type-btn')[ti]?.classList.add('active');
   toggleCustomTitle();
+  loadMatchFormat();
 }
 function set(id,val) { const el=document.getElementById(id); if(el) el.value=val||''; }
 
@@ -584,7 +598,7 @@ function renderMatches() {
       </div>
       <div class="mc-bd ${m.collapsed?'col':''}" data-bd="${m.id}">
         <div class="fg fg2">
-          <div class="field"><label>Round Label</label><input type="text" value="${esc(m.roundLabel)}" placeholder="e.g. Semi-Finals" oninput="um(${m.id},'roundLabel',this.value)"></div>
+          <div class="field"><label>Round Label</label><input type="text" value="${esc(m.roundLabel)}" placeholder="Round Label" oninput="um(${m.id},'roundLabel',this.value)"></div>
           <div class="field"><label>Game</label><select onchange="um(${m.id},'game',this.value);refreshMatchIcon(${m.id})">${S.gamesList.map(g=>`<option value="${esc(g)}" ${m.game===g?'selected':''}>${esc(g)}</option>`).join('')}</select></div>
         </div>
         <div class="fg fg2">
@@ -621,7 +635,11 @@ function buildTitle() {
   if(S.streamType==='custom') return S.customTitle||'STREAM';
   const tag=S.stateTag||'MN';
   const gs=S.selectedGames.length?S.selectedGames.join(' + '):'Stream';
-  if(S.streamType==='weekly') return `WEEK ${S.weekNum||'?'} — ${gs}`;
+  if(S.streamType==='weekly') {
+    const wk = S.weekNum ? `Week ${S.weekNum}` : 'Week ?';
+    const dy = S.dayNum ? ` • Day ${S.dayNum}` : '';
+    return `${wk}${dy} — ${gs}`;
+  }
   if(S.streamType==='divisionals') return `${tag} Divisionals Day ${S.weekNum||'?'} — ${gs}`;
   if(S.streamType==='playoffs') return `${tag} Playoffs Day ${S.weekNum||'?'} — ${gs}`;
   return gs;
@@ -661,10 +679,17 @@ function buildMsg(srv) {
       lines.push('');
       const sfxA = isDv&&m.seedA?` (Seed ${m.seedA})`:(m.seedA?` (${m.seedA})`:'');
       const sfxB = isDv&&m.seedB?` (Seed ${m.seedB})`:(m.seedB?` (${m.seedB})`:'');
-      if(m.teamA) lines.push(`${m.teamA}${sfxA}`);
-      lines.push('vs');
-      if(m.teamB) lines.push(`${m.teamB}${sfxB}`);
-      if(m.scoreA!==''&&m.scoreB!==''&&m.scoreA!==undefined&&m.scoreB!==undefined) lines.push(`Rounds: ${m.scoreA} — ${m.scoreB}`);
+      if(S.matchFormat==='condensed') {
+        // Condensed: teams on one line, Series label
+        const teamLine = [m.teamA?`${m.teamA}${sfxA}`:'', m.teamB?`${m.teamB}${sfxB}`:''].filter(Boolean).join(' vs ');
+        if(teamLine) lines.push(teamLine);
+        if(m.scoreA!==''&&m.scoreB!==''&&m.scoreA!==undefined&&m.scoreB!==undefined) lines.push(`Series: ${m.scoreA} — ${m.scoreB}`);
+      } else {
+        if(m.teamA) lines.push(`${m.teamA}${sfxA}`);
+        lines.push('vs');
+        if(m.teamB) lines.push(`${m.teamB}${sfxB}`);
+        if(m.scoreA!==''&&m.scoreB!==''&&m.scoreA!==undefined&&m.scoreB!==undefined) lines.push(`Rounds: ${m.scoreA} — ${m.scoreB}`);
+      }
       if(m.winner) lines.push(`Winner: 🏆 ${m.winner}`);
       lines.push('——————————————————');
     });
@@ -1084,6 +1109,23 @@ function renderSessionsList() {
       </div>
     </div>`;
   }).join('');
+}
+
+// ═══════════════════════════════════════════
+// MATCH FORMAT
+// ═══════════════════════════════════════════
+function setMatchFormat(fmt, btn) {
+  S.matchFormat = fmt;
+  document.querySelectorAll('#fmtDefault,#fmtCondensed').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  sap();
+}
+
+function loadMatchFormat() {
+  document.getElementById('fmtDefault')?.classList.remove('active');
+  document.getElementById('fmtCondensed')?.classList.remove('active');
+  const btn = document.getElementById(S.matchFormat==='condensed'?'fmtCondensed':'fmtDefault');
+  btn?.classList.add('active');
 }
 
 // ═══════════════════════════════════════════
